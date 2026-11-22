@@ -82,6 +82,7 @@ public static class WidgetLinks
             case "walker": await ParkAsync("walker"); break;
             case "partner": await PartnerAsync(); break;
             case "egg": await EggAsync(); break;
+            case "sprites": await SpritesAsync(); break;
             case "bank": await BankAsync(); break;
             case "lastsave": await LastSaveAsync(); break;
             default: AppLog.Warn("widgets", $"Unknown link {target}"); break;
@@ -197,6 +198,12 @@ public static class WidgetLinks
         }
         var deck = new SummaryDeck(1, slot => slot == 0, 0, load, caption);
         Leave(MonSummaryScreen.ShowAsync(host, services.GetRequiredService<ISpriteService>(), deck));
+    }
+
+    /// <summary>The sprite shelf has no screen of its own: a tap opens the Widgets menu at its tab, where its sprites are picked.</summary>
+    private static async Task SpritesAsync()
+    {
+        if (await HostAsync() is { } host) Leave(WidgetMenu.ShowAsync(host, HomeWidgetTab.Sprites));
     }
 
     /// <summary>The egg's save, opened at its Day Care; the Widgets menu when no save was read yet.</summary>

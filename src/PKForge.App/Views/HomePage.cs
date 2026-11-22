@@ -763,7 +763,7 @@ public sealed partial class HomePage : ContentPage, IPadHandler
         (new(SecondScreenMode.UserOff ? "Second screen: OFF" : "Second screen: ON", IconPath: "compact", Detail: "OFF leaves the other screen free, for an emulator."), Stay(ToggleSecondScreenAsync)),
         (new($"Sprite packs (full pack {SpritePackDownloader.SizeHint})", IconPath: "download", Detail: "Download, resume or delete each pack."), Leave(() => DownloadSpritePackAsync(start: false))),
         (new("Music", IconPath: "music", Detail: "Play your own audio files in the background."), Stay(ShowMusicAsync)),
-        (new("Home-screen widgets", IconPath: "park", Detail: "Living park, Pokéwalker, partner and egg."), Stay(() => WidgetMenu.ShowAsync(_hostGrid, HomeWidgetTab.Pokepark))),
+        (new("Home-screen widgets", IconPath: "park", Detail: "Living park, Pokéwalker, partner, egg and sprite shelf."), Stay(() => WidgetMenu.ShowAsync(_hostGrid, HomeWidgetTab.Pokepark))),
     ]);
 
     /// <summary>

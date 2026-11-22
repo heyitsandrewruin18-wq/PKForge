@@ -8,7 +8,7 @@ using SkiaSharp.Views.Maui.Controls;
 namespace PKForge.App.Views;
 
 /// <summary>The widgets the menu offers, in tab order.</summary>
-public enum HomeWidgetTab { Pokepark, Walker, Partner, Egg }
+public enum HomeWidgetTab { Pokepark, Walker, Partner, Egg, Sprites }
 
 /// <summary>
 /// The home-screen widgets menu (Settings › Look and feel, and the Poképark's options), painted by
@@ -22,7 +22,7 @@ public sealed class WidgetMenu : IPadHandler
 {
     private sealed record RowDef(string Id, WidgetMenuRow Row);
 
-    private static readonly string[] TabNames = ["Poképark", "Pokéwalker", "Partner", "Day Care egg"];
+    private static readonly string[] TabNames = ["Poképark", "Pokéwalker", "Partner", "Day Care egg", "Sprites"];
 
     private readonly TaskCompletionSource _closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Grid _host;
@@ -96,6 +96,7 @@ public sealed class WidgetMenu : IPadHandler
         HomeWidgetTab.Walker => HomeWidgetKind.Walker,
         HomeWidgetTab.Partner => HomeWidgetKind.Partner,
         HomeWidgetTab.Egg => HomeWidgetKind.Egg,
+        HomeWidgetTab.Sprites => HomeWidgetKind.Sprites,
         _ => null,
     };
 
@@ -120,6 +121,7 @@ public sealed class WidgetMenu : IPadHandler
         HomeWidgetTab.Pokepark => _parkLiving ? "Living Poképark" : "Poképark",
         HomeWidgetTab.Walker => "Pocket Pokéwalker",
         HomeWidgetTab.Partner => "Partner Pokémon",
+        HomeWidgetTab.Sprites => "Sprite shelf",
         _ => "Day Care egg",
     };
 
@@ -160,6 +162,17 @@ public sealed class WidgetMenu : IPadHandler
                 rows.Add(size);
                 rows.Add(pin);
                 break;
+            case HomeWidgetTab.Sprites:
+            {
+                var shelf = _settings.Sprites ?? [];
+                rows.Add(new("add", new("Add a sprite", $"{shelf.Length} of {PokeApiSprites.MaxShelf}",
+                    "Search PokéAPI's sprites by name or Pokédex number, then choose a style: front, shiny, artwork, HOME…", Action: true)));
+                if (shelf.Length > 0)
+                    rows.Add(new("remove", new("Remove a sprite", "", "Take one off the shelf, or clear it.", Action: true)));
+                rows.Add(size);
+                rows.Add(pin);
+                break;
+            }
             default:
                 var snapshot = _settings.EggSave is { } id && HomeWidgetStore.Eggs.TryGetValue(id, out var picked) ? picked : null;
                 rows.Add(new("save", new("Save", _settings.EggSave is null ? "Last save opened" : snapshot?.SaveName ?? "A save",
@@ -177,6 +190,7 @@ public sealed class WidgetMenu : IPadHandler
             ? "Your residents living their life under the park's trees and the sky of the hour. Tap: the Poképark."
             : "Your residents on the grass under the sky of the hour, with the park's latest moments. Tap: the Poképark.",
         HomeWidgetTab.Walker => "The Pokéwalker's LCD: the Pokémon walking, the steps and watts. Tap: the Pokéwalker.",
+        HomeWidgetTab.Sprites => $"The sprites you picked, on a shelf: the {HomeWidgetSizes.Label(Size)} layout shows the first {SpriteShelf.Capacity(Size)}. Tap: this menu.",
         HomeWidgetTab.Partner => "Your partner on its battle base. It sleeps at night and tires when the battery is low. Tap: its summary.",
         _ => "The egg wobbles more as it nears hatching. Tap: the save's Day Care.",
     };
@@ -347,6 +361,8 @@ public sealed class WidgetMenu : IPadHandler
                         await WalkerScreen.ShowAsync(_host, [.. await Task.Run(park.LoadRoster)]);
                     break;
                 case "partner": await ChoosePartnerAsync(); break;
+                case "add": _note = ""; await AddSpriteAsync(); break;
+                case "remove": _note = ""; await RemoveSpriteAsync(); break;
                 case "save": await ChooseSaveAsync(); break;
             }
         }
@@ -437,6 +453,94 @@ public sealed class WidgetMenu : IPadHandler
         finally { overlay.Close(); }
         _settings = HomeWidgetStore.Settings;
         _note = $"{partner.Name} is your partner.";
+    }
+
+    // ── The sprite shelf ─────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Search PokéAPI's sprites by name or number, choose a style, fetch that one file (kept on the
+    /// device so the widget paints with PKForge closed) and put it on the shelf. A style the Pokémon
+    /// does not have is said so: nothing else is put in its place.
+    /// </summary>
+    private async Task AddSpriteAsync()
+    {
+        var shelf = _settings.Sprites ?? [];
+        if (SpriteShelf.IsFull(shelf))
+        {
+            _note = $"The shelf holds {PokeApiSprites.MaxShelf} sprites. Remove one first.";
+            return;
+        }
+        var data = IPlatformApplication.Current!.Services.GetRequiredService<IGameDataService>();
+        var query = await TextPopup.ShowLineAsync(_host, "Search sprites", "A name or a Pokédex number: Pikachu, 25…", confirm: "Search");
+        if (string.IsNullOrWhiteSpace(query)) return;
+        var hits = PokeApiSprites.Search(data.SpeciesNames, query);
+        if (hits.Count == 0)
+        {
+            await PadMenu.ShowAsync(_host, "No match", $"Nothing is called \"{query.Trim()}\". Try part of its name, or its Pokédex number (alternate forms start at 10001).", "OK");
+            return;
+        }
+        SpriteSearchHit hit;
+        if (hits.Count == 1) hit = hits[0];
+        else
+        {
+            var labels = hits.Select(h => $"#{h.Id:000} {h.Name}").ToArray();
+            var pick = await PadMenu.ShowAsync(_host, "Which one?", hits.Count >= 30 ? "The first 30 matches: type more of the name to narrow it." : null, labels);
+            var at = Array.IndexOf(labels, pick);
+            if (at < 0) return;
+            hit = hits[at];
+        }
+        var styles = PokeApiSprites.Styles;
+        var choice = await PadMenu.ShowAsync(_host, $"{hit.Name}: which sprite?", "Not every Pokémon has every style.",
+            [.. styles.Select(s => new PadOption(s.Label, Detail: s.Detail))]);
+        if (styles.FirstOrDefault(s => s.Label == choice) is not { } style) return;
+        if (SpriteShelf.Contains(shelf, hit.Id, style.Id))
+        {
+            _note = $"{hit.Name} ({style.Label}) is on the shelf already.";
+            return;
+        }
+        var overlay = LoadingOverlay.Show(_host, "Sprites", $"Getting {hit.Name}…");
+        PokeApiFetch result;
+        try { result = await PokeApiSpriteService.EnsureAsync(hit.Id, style.Id); }
+        finally { overlay.Close(); }
+        switch (result)
+        {
+            case PokeApiFetch.Ready:
+                _note = "";
+                Save(_settings with { Sprites = SpriteShelf.Add(_settings.Sprites, new SpriteShelfItem(hit.Id, hit.Name, style.Id)) });
+                if (_note.Length == 0) _note = $"{hit.Name} is on the shelf.";
+                break;
+            case PokeApiFetch.Missing:
+                await PadMenu.ShowAsync(_host, "Not on PokéAPI", $"PokéAPI's repository has no \"{style.Label}\" sprite for {hit.Name}. Try another style.", "OK");
+                break;
+            default:
+                await PadMenu.ShowAsync(_host, "Could not get it", "The sprite did not come. Check your connection and try again.", "OK");
+                break;
+        }
+    }
+
+    private async Task RemoveSpriteAsync()
+    {
+        var shelf = _settings.Sprites ?? [];
+        if (shelf.Length == 0) return;
+        var labels = shelf.Select((item, i) => $"{i + 1}. {SpriteShelf.Label(item)}").ToList();
+        var options = labels.Select(label => new PadOption(label)).ToList();
+        if (shelf.Length > 1) options.Add(new PadOption("Clear the shelf", IconPath: "close"));
+        var pick = await PadMenu.ShowAsync(_host, "Remove which?", null, [.. options]);
+        if (pick is null) return;
+        if (pick == "Clear the shelf")
+        {
+            Save(_settings with { Sprites = null });
+            foreach (var item in shelf) PokeApiSpriteService.Forget(item, []);
+            if (_note.Length == 0) _note = "The shelf is empty.";
+            return;
+        }
+        var at = labels.IndexOf(pick);
+        if (at < 0) return;
+        var removed = shelf[at];
+        var rest = SpriteShelf.RemoveAt(shelf, at);
+        Save(_settings with { Sprites = rest.Length == 0 ? null : rest });
+        PokeApiSpriteService.Forget(removed, rest);
+        if (_note.Length == 0) _note = $"{removed.Name} is off the shelf.";
     }
 
     private async Task ChooseSaveAsync()

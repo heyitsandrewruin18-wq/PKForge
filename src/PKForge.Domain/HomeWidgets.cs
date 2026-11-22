@@ -1,13 +1,13 @@
 namespace PKForge.Domain;
 
-/// <summary>The three home-screen widgets beside the Poképark: the Pocket Pokéwalker, the partner, the egg.</summary>
-public enum HomeWidgetKind { Walker, Partner, Egg }
+/// <summary>The home-screen widgets beside the Poképark: the Pocket Pokéwalker, the partner, the egg, the sprite shelf.</summary>
+public enum HomeWidgetKind { Walker, Partner, Egg, Sprites }
 
 /// <summary>A widget layout: 2x2, 4x2 or 4x4 cells.</summary>
 public enum HomeWidgetSizeHint { Small, Wide, Large }
 
 /// <summary>Every home-screen widget PKForge offers, each with its own size choice.</summary>
-public enum WidgetSlot { Walker, Partner, Egg, Park, LivePark }
+public enum WidgetSlot { Walker, Partner, Egg, Park, LivePark, Sprites }
 
 /// <summary>
 /// What the player chose in the Widgets menu, kept in the app's files (never in a save). Every
@@ -17,6 +17,7 @@ public enum WidgetSlot { Walker, Partner, Egg, Park, LivePark }
 /// <param name="EggSave">The save whose eggs the egg widget follows; null follows the save last opened.</param>
 /// <param name="WalkerBigNumber">The Pokéwalker's big number: steps today (true) or steps this walk.</param>
 /// <param name="WalkerAlert">Whether the Pokéwalker shows "!" when a Radar or Dowsing can be afforded.</param>
+/// <param name="Sprites">The sprite shelf's sprites (PokéAPI's), in the order they were added; null for none.</param>
 /// <remarks>
 /// The layouts are null for "Auto": the widget follows the launcher's tile, as it always did. They
 /// replace the old WalkerSize/PartnerSize/EggSize fields, which only ever sized the menu's preview:
@@ -31,7 +32,9 @@ public sealed record HomeWidgetSettings(
     HomeWidgetSizeHint? PartnerLayout = null,
     HomeWidgetSizeHint? EggLayout = null,
     HomeWidgetSizeHint? ParkLayout = null,
-    HomeWidgetSizeHint? LiveParkLayout = null)
+    HomeWidgetSizeHint? LiveParkLayout = null,
+    HomeWidgetSizeHint? SpritesLayout = null,
+    SpriteShelfItem[]? Sprites = null)
 {
     /// <summary>The layout chosen for a widget, or null for Auto (fit the launcher).</summary>
     public HomeWidgetSizeHint? LayoutOf(WidgetSlot slot) => slot switch
@@ -40,6 +43,7 @@ public sealed record HomeWidgetSettings(
         WidgetSlot.Partner => PartnerLayout,
         WidgetSlot.Egg => EggLayout,
         WidgetSlot.Park => ParkLayout,
+        WidgetSlot.Sprites => SpritesLayout,
         _ => LiveParkLayout,
     };
 
@@ -49,6 +53,7 @@ public sealed record HomeWidgetSettings(
         WidgetSlot.Partner => this with { PartnerLayout = layout },
         WidgetSlot.Egg => this with { EggLayout = layout },
         WidgetSlot.Park => this with { ParkLayout = layout },
+        WidgetSlot.Sprites => this with { SpritesLayout = layout },
         _ => this with { LiveParkLayout = layout },
     };
 
@@ -56,6 +61,7 @@ public sealed record HomeWidgetSettings(
     {
         HomeWidgetKind.Walker => WidgetSlot.Walker,
         HomeWidgetKind.Partner => WidgetSlot.Partner,
+        HomeWidgetKind.Sprites => WidgetSlot.Sprites,
         _ => WidgetSlot.Egg,
     };
 

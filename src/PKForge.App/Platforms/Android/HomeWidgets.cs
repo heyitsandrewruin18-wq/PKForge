@@ -163,6 +163,7 @@ public static class HomeWidgets
     {
         HomeWidgetKind.Walker => typeof(WalkerWidgetProvider),
         HomeWidgetKind.Partner => typeof(PartnerWidgetProvider),
+        HomeWidgetKind.Sprites => typeof(SpritesWidgetProvider),
         _ => typeof(EggWidgetProvider),
     };
 
@@ -204,7 +205,7 @@ public static class HomeWidgets
             {
                 case WidgetSlot.Park: _ = Task.Run(() => Guard(() => PokeparkWidgetProvider.UpdateAll(context))); break;
                 case WidgetSlot.LivePark: _ = Task.Run(() => Guard(() => LiveParkWidgetProvider.UpdateAll(context))); break;
-                default: Refresh(slot switch { WidgetSlot.Walker => HomeWidgetKind.Walker, WidgetSlot.Partner => HomeWidgetKind.Partner, _ => HomeWidgetKind.Egg }); break;
+                default: Refresh(slot switch { WidgetSlot.Walker => HomeWidgetKind.Walker, WidgetSlot.Partner => HomeWidgetKind.Partner, WidgetSlot.Sprites => HomeWidgetKind.Sprites, _ => HomeWidgetKind.Egg }); break;
             }
         }
         catch (Java.Lang.Exception ex) { Android.Util.Log.Warn("Widgets", $"Refresh failed: {ex.Message}"); }
@@ -222,6 +223,7 @@ public static class HomeWidgets
         WidgetSlot.LivePark => typeof(LiveParkWidgetProvider),
         WidgetSlot.Walker => typeof(WalkerWidgetProvider),
         WidgetSlot.Partner => typeof(PartnerWidgetProvider),
+        WidgetSlot.Sprites => typeof(SpritesWidgetProvider),
         _ => typeof(EggWidgetProvider),
     };
 
@@ -262,8 +264,8 @@ public static class HomeWidgets
         Refresh(HomeWidgetKind.Egg);
     }
 
-    private static readonly SemaphoreSlim[] Painting = [new(1, 1), new(1, 1), new(1, 1)];
-    private static readonly int[] Turns = new int[3];
+    private static readonly SemaphoreSlim[] Painting = [new(1, 1), new(1, 1), new(1, 1), new(1, 1)];
+    private static readonly int[] Turns = new int[4];
 
     /// <summary>
     /// Paints the widgets <paramref name="ids"/> of that kind. <paramref name="quick"/> (the first
@@ -293,7 +295,7 @@ public static class HomeWidgets
                     var (widthDp, heightDp) = CellDp(context, options, hintW, hintH);
                     // Every frame crosses a binder and counts against the launcher's bitmap memory (about
                     // 1.5 screens): all frames together stay under two million pixels (8 MB).
-                    var frames = still is not null ? 1 : kind == HomeWidgetKind.Egg ? 4 : 2;
+                    var frames = still is not null || kind == HomeWidgetKind.Sprites ? 1 : kind == HomeWidgetKind.Egg ? 4 : 2;
                     var scale = (float)Math.Min(metrics.Density, Math.Sqrt(2_000_000.0 / frames / Math.Max(1, widthDp * heightDp)));
                     int tileW = Math.Max(64, (int)(widthDp * scale)), tileH = Math.Max(64, (int)(heightDp * scale));
                     // The layout chosen in the Widgets menu, whatever tile the launcher gives; Auto fits the tile.
@@ -309,7 +311,7 @@ public static class HomeWidgets
                     // A launcher's binder or a missing sprite must never crash PKForge, nor leave a
                     // stale picture: the widget says to tap it, and the tap still leads to its screen.
                     Android.Util.Log.Warn("Widgets", $"{kind} widget update failed: {ex}");
-                    Fallback(context, manager, id, kind switch { HomeWidgetKind.Walker => "walker", HomeWidgetKind.Partner => "partner", _ => "egg" });
+                    Fallback(context, manager, id, kind switch { HomeWidgetKind.Walker => "walker", HomeWidgetKind.Partner => "partner", HomeWidgetKind.Sprites => "sprites", _ => "egg" });
                 }
             }
         }
@@ -358,6 +360,7 @@ public static class HomeWidgets
         {
             HomeWidgetKind.Walker => "walker",
             HomeWidgetKind.Partner => "partner",
+            HomeWidgetKind.Sprites => "sprites",
             _ => "egg",
         }, id));
         return views;
@@ -460,6 +463,8 @@ public static class HomeWidgets
                 var interval = mood switch { PartnerMood.Asleep => 1600, PartnerMood.Happy => 600, _ => 1000 };
                 return new WidgetPicture(frames, interval, partner is null ? PartnerWidget.EmptyLine : PartnerWidget.Line(partner, mood, battery));
             }
+            case HomeWidgetKind.Sprites:
+                return await RenderSpritesAsync(face, size, widthPx, heightPx, settings, live, fetch).ConfigureAwait(false);
             default:
             {
                 var view = EggWidget.View(HomeWidgetStore.EggSnapshot(settings));
@@ -470,6 +475,39 @@ public static class HomeWidgets
                 var frames = Frames(count).Select(f => HomeWidgetPaint.RenderEgg(view, DateTime.Now, size, widthPx, heightPx, f, face)).ToArray();
                 return new WidgetPicture(frames, interval, $"{view.Title}. {view.Line} {view.Detail}");
             }
+        }
+    }
+
+    /// <summary>
+    /// The sprite shelf: the sprites the player chose, from the files PKForge kept when they were added.
+    /// Only with <paramref name="fetch"/> is a missing file fetched again (a short wait: it was fetched
+    /// when added, so this is for a cleared cache); otherwise that cell shows quiet dots. An empty
+    /// shelf says so, which is always true of what was just read, so it needs no neutral face.
+    /// </summary>
+    private static async Task<WidgetPicture> RenderSpritesAsync(SKTypeface face, HomeWidgetSizeHint size, int widthPx, int heightPx,
+        HomeWidgetSettings settings, bool live, bool fetch)
+    {
+        var shown = SpriteShelf.Visible(settings.Sprites, size);
+        var cells = new List<SpriteShelfCell>(shown.Count);
+        try
+        {
+            foreach (var item in shown)
+            {
+                var sprite = PokeApiSpriteService.LoadKept(item.Id, item.Style);
+                if (sprite is null && fetch)
+                {
+                    using var wait = new CancellationTokenSource(TimeSpan.FromSeconds(live ? 6 : 3));
+                    if (await PokeApiSpriteService.EnsureAsync(item.Id, item.Style, wait.Token).ConfigureAwait(false) == PokeApiFetch.Ready)
+                        sprite = PokeApiSpriteService.LoadKept(item.Id, item.Style);
+                }
+                cells.Add(new SpriteShelfCell(item.Name, sprite));
+            }
+            var picture = SpriteShelfPaint.Render(cells, size, widthPx, heightPx, face);
+            return new WidgetPicture([picture], 4000, SpriteShelf.Describe(shown));
+        }
+        finally
+        {
+            foreach (var cell in cells) cell.Sprite?.Dispose();
         }
     }
 
@@ -810,4 +848,13 @@ public sealed class PartnerWidgetProvider : HomeWidgetProvider
 public sealed class EggWidgetProvider : HomeWidgetProvider
 {
     protected override HomeWidgetKind Kind => HomeWidgetKind.Egg;
+}
+
+/// <summary>The sprite shelf widget: the PokéAPI sprites the player picked in the Widgets menu.</summary>
+[BroadcastReceiver(Label = "Sprite shelf", Exported = true)]
+[IntentFilter(new[] { AppWidgetManager.ActionAppwidgetUpdate })]
+[MetaData("android.appwidget.provider", Resource = "@xml/sprites_widget_info")]
+public sealed class SpritesWidgetProvider : HomeWidgetProvider
+{
+    protected override HomeWidgetKind Kind => HomeWidgetKind.Sprites;
 }
